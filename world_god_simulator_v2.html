@@ -3551,6 +3551,9 @@ const TV={ok:false,failed:false,loading:null,active:false,world:null,t:0,
     vec3 col=mix(body,refl,F);
     col+=uSunCol*pow(max(dot(R,uSun),0.),420.)*8.*step(0.,uSun.y)+uSunCol*pow(max(dot(R,uSun),0.),40.)*0.12;
     float nz=texture2D(tWN,uv*0.33+vec2(uTime*0.02,0.)).a;float shore=(1.-smoothstep(0.,0.1+nz*0.12,dep))*step(0.001,dep)*smoothstep(0.3,0.7,nz+0.25*sin(uTime*1.3-dep*9.));
+    #ifdef LAKE
+    shore*=0.;
+    #endif
     float crest=smoothstep(0.55,1.1,vCrest+nz*0.35);float foam=clamp(max(shore,crest*0.9),0.,1.);col=mix(col,(uAmb+uSunCol*0.6*lit)*0.95,foam*0.85);
     gl_FragColor=vec4(col,mix(smoothstep(0.,0.08,dep),1.,step(150.,dist)));
     #include <tonemapping_fragment>
@@ -3600,7 +3603,7 @@ const TV={ok:false,failed:false,loading:null,active:false,world:null,t:0,
   this.ocean=near;this.oceanFar=far;this.groups.water.add(near,far);},
  // lakes, rivers and flood water as a per-cell surface near the player
  buildLakes(){const T=this.T,w=W,n=w.n,R0=110,cx=FP.px|0,cz=FP.pz|0;const pos=[],dep=[],idx=[];let v=0;
-  for(let z=Math.max(0,cz-R0);z<=Math.min(n-1,cz+R0);z++)for(let x=Math.max(0,cx-R0);x<=Math.min(n-1,cx+R0);x++){const i=z*n+x;if(!w.isWater(i)||w.elev[i]<0)continue;const top=FP.waterTop(i)+(w.flood[i]>0.4&&w.water[i]<=0?Math.min(0.5,w.flood[i]*0.04):0);const d=Math.max(0.02,top-this.hOf(i))*3;
+  for(let z=Math.max(0,cz-R0);z<=Math.min(n-1,cz+R0);z++)for(let x=Math.max(0,cx-R0);x<=Math.min(n-1,cx+R0);x++){const i=z*n+x;if(!w.isWater(i)||w.elev[i]<0)continue;const top=FP.waterTop(i)+(w.flood[i]>0.4&&w.water[i]<=0?Math.min(0.5,w.flood[i]*0.04):0);const d=Math.max(0.7,(top-this.hOf(i))*8);
    pos.push(x,top,z,x+1,top,z,x+1,top,z+1,x,top,z+1);dep.push(d,d,d,d);idx.push(v,v+2,v+1,v,v+3,v+2);v+=4;}
   if(this.lakes){this.groups.water.remove(this.lakes);this.lakes.geometry.dispose();}
   const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(pos,3));g.setAttribute('aDepth',new T.Float32BufferAttribute(dep,1));g.setIndex(idx);
@@ -3860,18 +3863,22 @@ TV.Town={cities:new Map(),buildings:[],occupied:new Set(),fields:new Set(),
  build(c,civ){const T=this.tv.T,w=W,n=w.n;const era=civ?civ.era:0,ruins=c.state!=='alive';const G={};const g=(k)=>G[k]||(G[k]=new TVGB());const bl=[],occ=new Set(),fld=new Set();
   const night=1-R.daylight(w);const plots=R.cityPlots(w,c);const kinds=PXB.kinds(era);const lm=ruins?'ruin':PXB.landmark(era,c.level);const rad=1.3+c.level*1.5;const dmg=c.damage||0;
   const civCol=civ?hexToRgb(civ.color).map(v=>TV.lin(v/255)):[0.5,0.5,0.5];const hs=(k)=>hashI(c.id*977+k);
-  for(const p of plots){const x=c.x+p.dx+0.5,z=c.y+p.dy+0.5;const i=(c.y+p.dy)*n+c.x+p.dx;occ.add(i);let kind;
+  const SP=1.4,pave=era>=7?'asphalt':era>=4?'cobble':'dirt';
+  for(const p of plots){const x=c.x+0.5+p.dx*SP,z=c.y+0.5+p.dy*SP;if(!w.inB(x|0,z|0))continue;const i=(z|0)*n+(x|0);if(w.isWater(i)&&!p.center)continue;
+   for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){const X=(x+dx*0.6)|0,Z=(z+dz*0.6)|0;if(w.inB(X,Z))occ.add(Z*n+X);}
+   if(!ruins){const gb=g(pave);const h=SP/2;for(let a=0;a<2;a++)for(let b=0;b<2;b++){const x0=x-h+a*h,z0=z-h+b*h;const v0=gb.v;for(const [u,v] of [[0,0],[1,0],[1,1],[0,1]]){const X=x0+u*h,Z=z0+v*h;gb.vert(X,FP.heightAt(X,Z)+0.01,Z,0,1,0,X*0.8,Z*0.8);}gb.quad(v0,v0+3,v0+2,v0+1);}}
+   let kind;
    if(ruins)kind='ruin';else if(p.center)kind=lm;else if(dmg>0.3&&hashI(c.id+p.k*5)<dmg*0.6)kind='ruin';else{kind=kinds[Math.floor(p.hs*kinds.length)%kinds.length];const d=Math.hypot(p.dx,p.dy);if(era>=8&&d>rad*0.65&&kind==='glass')kind='apartment';if(era>=8&&d>rad*0.8)kind='suburb';if(era===7&&d>rad*0.75&&kind==='factory')kind='brick';if(era<=6&&c.level>=2&&p.k%11===5)kind='well';}
    // face the town centre on a street grid
-   const toC=Math.atan2(-p.dy,-p.dx);const yaw=p.center?hs(3)*0.2:Math.round((toC-Math.PI/2)/(Math.PI/2))*(Math.PI/2)+(hs(p.k)-0.5)*0.12;
+   const toC=Math.atan2(-p.dy,-p.dx);if(p.center&&false)continue;const yaw=p.center?hs(3)*0.2:Math.round((toC-Math.PI/2)/(Math.PI/2))*(Math.PI/2)+(hs(p.k)-0.5)*0.12;
    const H=[FP.heightAt(x-0.4,z-0.4),FP.heightAt(x+0.4,z-0.4),FP.heightAt(x-0.4,z+0.4),FP.heightAt(x+0.4,z+0.4)];const y=Math.min(...H),yt=Math.max(...H);
    const r=this.house(G,g,kind,x,y,yt,z,yaw,era,civCol,c.id*31+p.k,night>0.35,c);if(r)bl.push({x,z,r,city:c.id,kind});}
   // walls and towers
-  if(c.walls&&!ruins){const R0=rad+0.8,seg=Math.max(14,Math.round(R0*6.283/0.55));for(let k=0;k<seg;k++){const a=(k+0.5)/seg*6.283,x=c.x+0.5+Math.cos(a)*R0,z=c.y+0.5+Math.sin(a)*R0;const ii=(z|0)*n+(x|0);if(ii<0||ii>=w.count||w.isWater(ii))continue;const y=FP.heightAt(x,z)-0.05;
+  if(c.walls&&!ruins){const R0=rad*1.4+1,seg=Math.max(14,Math.round(R0*6.283/0.55));for(let k=0;k<seg;k++){const a=(k+0.5)/seg*6.283,x=c.x+0.5+Math.cos(a)*R0,z=c.y+0.5+Math.sin(a)*R0;const ii=(z|0)*n+(x|0);if(ii<0||ii>=w.count||w.isWater(ii))continue;const y=FP.heightAt(x,z)-0.05;
     const len=R0*6.283/seg+0.02;this.box(g('stone'),x,y,z,len,0.16,0.62,a+Math.PI/2,0.8);for(let q=-1;q<=1;q+=2)this.box(g('stone'),x+Math.cos(a+Math.PI/2)*q*len*0.25,y+0.62,z+Math.sin(a+Math.PI/2)*q*len*0.25,len*0.28,0.16,0.08,a+Math.PI/2,0.8);
     if(k%Math.max(3,Math.round(seg/8))===0){this.cyl(g('stone'),x,y,z,0.2,0.95,10,0.8);this.cone(g(era>=5?'slate':'thatch'),x,y+0.95,z,0.25,0.35,10,0.6);bl.push({x,z,r:0.22,city:c.id});}}}
   // farm fields on owned fertile land (same rule as the map)
-  if(!ruins&&c.level>=1&&era>=1){const fr=Math.ceil(rad+2.5);for(let dy=-fr;dy<=fr;dy++)for(let dx=-fr;dx<=fr;dx++){const x=c.x+dx,y=c.y+dy;if(!w.inB(x,y))continue;const dd=Math.hypot(dx,dy);if(dd<rad*0.9||dd>rad+2.4)continue;const i=y*n+x;if(w.owner[i]!==c.civ||w.isWater(i)||w.fert[i]<0.3||w.forest[i]>0.35||hashI(i*7+3)>0.55||occ.has(i))continue;fld.add(i);
+  if(!ruins&&c.level>=1&&era>=1){const fr=Math.ceil(rad*1.4+3.5);for(let dy=-fr;dy<=fr;dy++)for(let dx=-fr;dx<=fr;dx++){const x=c.x+dx,y=c.y+dy;if(!w.inB(x,y))continue;const dd=Math.hypot(dx,dy);if(dd<rad*1.4+0.6||dd>rad*1.4+3.4)continue;const i=y*n+x;if(w.owner[i]!==c.civ||w.isWater(i)||w.fert[i]<0.3||w.forest[i]>0.35||hashI(i*7+3)>0.55||occ.has(i))continue;fld.add(i);
     const gb=g('soil');const b=gb.v;for(const [u,v] of [[0,0],[1,0],[1,1],[0,1]])gb.vert(x+u,FP.heightAt(x+u,y+v)+0.012,y+v,0,1,0,u*2,v*2);gb.quad(b,b+3,b+2,b+1);}}
   // harbour
   if(c.port&&!ruins){let px=0,pz=0,found=false;for(let d=1;d<=5&&!found;d++)for(let k=0;k<8;k++){const a=k/8*6.283,x=Math.round(c.x+Math.cos(a)*d),y=Math.round(c.y+Math.sin(a)*d);if(w.inB(x,y)&&w.elev[y*n+x]<0){px=x+0.5;pz=y+0.5;found=true;break;}}
@@ -4001,7 +4008,7 @@ TV.Life={cap:9000,
   if(!C.robe){for(const sd of [-1,1])this.part('cap',0,hip,sd*0.06*H*wide,legR*2,legL*0.75,legR*2,pants,0,0,sd*sw,legL*0.5);for(const sd of [-1,1]){const a=sd*sw;this.part('box',Math.sin(a)*legL+0.03*H,hip-Math.cos(a)*legL+0.01*H,sd*0.06*H*wide,0.1*H,0.04*H,0.07*H,[0.08,0.06,0.05]);}}
   else this.part('cone',0,0.33*H,0,0.17*H*wide,0.62*H,0.15*H*wide,shirt);
   this.part('sph',0,0.64*H+bob,0,0.085*H*wide,0.17*H,0.13*H*wide,shirt);this.part('cap',0,0.5*H+bob,0,0.24*H*wide,0.05*H,0.22*H*wide,C.era>=4?[0.1,0.07,0.05]:shirt,0,0,1.5708);
-  for(const sd of [-1,1]){const a=-sd*sw*0.8+(opt.swing&&sd>0?-opt.swing:0);this.part('cap',0,0.79*H+bob,sd*0.16*H*wide,0.075*H,0.28*H,0.075*H,shirt,sd*0.08,0,a,0.2*H);const hx=Math.sin(a)*0.38*H,hy=0.79*H+bob-Math.cos(a)*0.38*H;this.part('sph',hx,hy,sd*0.165*H*wide,0.035*H,0.035*H,0.035*H,skin);
+  for(const sd of [-1,1]){const a=-sd*sw*0.8+(opt.swing&&sd>0?-opt.swing:0);this.part('cap',0,0.79*H+bob,sd*0.15*H*wide,0.058*H,0.28*H,0.058*H,shirt,sd*0.08,0,a,0.2*H);const hx=Math.sin(a)*0.38*H,hy=0.79*H+bob-Math.cos(a)*0.38*H;this.part('sph',hx,hy,sd*0.165*H*wide,0.035*H,0.035*H,0.035*H,skin);
    if(sd>0&&C.tool)this.tool(C,hx,hy,0.165*H*wide,a,H,civ);}
   const hy=0.89*H+bob;this.part('sph',0.01*H,hy,0,0.085*H,0.095*H,0.08*H,skin);if(C.hair)this.part('sph',-0.015*H,hy+0.02*H,0,0.088*H,0.085*H,0.085*H,hair);
   for(const sd of [-1,1])this.part('sph',0.078*H,hy+0.01*H,sd*0.03*H,0.012*H,0.014*H,0.012*H,[0.03,0.03,0.04]);
@@ -4293,6 +4300,13 @@ TV.FX3={shake:0,flash:0,seen:new WeakSet(),
 
 // fetch the 3D engine in the background so the first possession starts quickly
 setTimeout(()=>{if(window.WebGL2RenderingContext)TV.imports().catch(()=>{});},3000);
+
+// 3D quality options in the possession settings (F2) and the Possess panel
+{const _res=UI.resolve;UI.resolve=function(path){const [o,k]=path.split('.');if(o==='TVQ')return [TV.Q,k];return _res.call(this,path);};}
+{const _in=UI.onInput;UI.onInput=function(e){_in.call(this,e);const b=e.target.dataset.b||'';if(b==='TVQ.grass'&&TV.Veg)TV.Veg.lastG=null;if(b==='TVQ.pr'&&TV.r){TV.r.setPixelRatio(TV.Q.pr);TV.resize();}if(b.startsWith('TVQ.')&&TV.gov)TV.gov.lvl=5;};}
+TV.settingsHTML=function(){return UI.sec('3D Graphics',`<div class="hint">${TV.ok?'three.js renderer':TV.failed?'three.js could not load (offline?), so the basic renderer is used.':'three.js loads the first time you possess a creature.'}</div>`+UI.sl('TVQ.clouds','Volumetric cloud quality',0,64,2)+UI.sl('TVQ.grass','Grass blades',0,40000,500)+UI.sl('TVQ.pr','Resolution scale',0.5,2,0.05,'x'),false);};
+{const _os=FP.openSettings;FP.openSettings=function(){_os.call(this);const b=$('modalBody');if(b)b.insertAdjacentHTML('beforeend',TV.settingsHTML());};}
+{const _px=UIX.possess;UIX.possess=function(){return _px.call(this)+TV.settingsHTML();};}
 
 </script>
 <!-- THREE:END -->
